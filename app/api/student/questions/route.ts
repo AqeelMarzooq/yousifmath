@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   }
 
   const questions = await prisma.question.findMany({
-    where: { topicId, level },
+    where: { topicId, level, isActive: true },
     select: {
       id: true,
       questionText: true,

@@ -37,6 +37,7 @@ model Question {
   correctAnswer String
   explanation   String?
   xpValue       Int      @default(10)
+  isActive      Boolean  @default(true)
   answers       Answer[]
 }
 

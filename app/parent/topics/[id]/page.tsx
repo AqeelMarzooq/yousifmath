@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { CheckCircle, XCircle, Circle, ChevronDown, ChevronUp, BookOpen } from "lucide-react";
+import { CheckCircle, XCircle, Circle, ChevronDown, ChevronUp, BookOpen, RefreshCw, RotateCcw, Shuffle } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import LessonOverlay from "@/components/student/LessonOverlay";
@@ -19,6 +19,8 @@ const LEVEL_COLORS: Record<string, string> = {
   SKILL: "text-blue-400 border-blue-700/40 bg-blue-900/10",
   DEPTH: "text-purple-400 border-purple-700/40 bg-purple-900/10",
 };
+
+const ACTIVE_COUNT: Record<string, number> = { FLUENCY: 5, SKILL: 8, DEPTH: 4 };
 
 const TYPE_LABELS: Record<string, string> = {
   MCQ: "Multiple Choice",
@@ -58,6 +60,11 @@ export default function ParentTopicDetail() {
   const [openLevels, setOpenLevels] = useState<Record<string, boolean>>({ FLUENCY: true, SKILL: true, DEPTH: true });
   const [expandedQ, setExpandedQ] = useState<Record<string, boolean>>({});
   const [overlay, setOverlay] = useState<LessonContent | null>(null);
+  const [reassignPanel, setReassignPanel] = useState<string | null>(null); // level string
+  const [resetProgress, setResetProgress] = useState(true);
+  const [rerollQuestions, setRerollQuestions] = useState(true);
+  const [reassigning, setReassigning] = useState(false);
+  const [reassignDone, setReassignDone] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/parent/topic/${topicId}`).then((r) => r.json()).then(setData);
@@ -69,6 +76,22 @@ export default function ParentTopicDetail() {
   const allQuestions = grouped.flatMap((g) => g.questions);
   const attempted = allQuestions.filter((q) => q.latestAnswer !== null);
   const correct = allQuestions.filter((q) => q.latestAnswer?.isCorrect);
+
+  const handleReassign = async () => {
+    if (!reassignPanel) return;
+    setReassigning(true);
+    await fetch("/api/parent/reassign", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topicId, level: reassignPanel, resetProgress, rerollQuestions }),
+    });
+    setReassigning(false);
+    setReassignPanel(null);
+    setReassignDone(reassignPanel);
+    setTimeout(() => setReassignDone(null), 3000);
+    // Refresh data
+    fetch(`/api/parent/topic/${topicId}`).then((r) => r.json()).then(setData);
+  };
 
   const openLesson = (q: QuestionData) => {
     const content = generateLessonContent({
@@ -123,28 +146,96 @@ export default function ParentTopicDetail() {
       {grouped.map((group) => (
         <div key={group.level} className="space-y-2">
           {/* Level header */}
-          <button
-            onClick={() => setOpenLevels((o) => ({ ...o, [group.level]: !o[group.level] }))}
-            className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all cursor-pointer ${LEVEL_COLORS[group.level]}`}
-          >
-            <div className="flex items-center gap-3">
-              <span className="bebas text-xl tracking-wider">{LEVEL_LABELS[group.level]}</span>
-              <span className="text-sm opacity-70">{group.questions.length} questions</span>
-              {group.attempted && (
-                <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
-                  group.bestScore! >= 80 ? "bg-[#FFD700]/10 border-[#FFD700]/30 text-[#FFD700]" :
-                  group.bestScore! < 60 ? "bg-red-900/30 border-red-700/30 text-red-400" :
-                  "bg-white/5 border-white/20 text-white/60"
-                }`}>
-                  Best: {group.bestScore}%
-                </span>
-              )}
-              {!group.attempted && (
-                <span className="text-xs px-2 py-0.5 rounded-full border border-white/10 text-white/30">Not started</span>
-              )}
-            </div>
-            {openLevels[group.level] ? <ChevronUp className="w-4 h-4 opacity-60" /> : <ChevronDown className="w-4 h-4 opacity-60" />}
-          </button>
+          <div className={`rounded-xl border ${LEVEL_COLORS[group.level]}`}>
+            <button
+              onClick={() => setOpenLevels((o) => ({ ...o, [group.level]: !o[group.level] }))}
+              className="w-full flex items-center justify-between p-4 cursor-pointer"
+            >
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="bebas text-xl tracking-wider">{LEVEL_LABELS[group.level]}</span>
+                <span className="text-sm opacity-70">{group.questions.length} questions</span>
+                {group.attempted && (
+                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
+                    group.bestScore! >= 80 ? "bg-[#FFD700]/10 border-[#FFD700]/30 text-[#FFD700]" :
+                    group.bestScore! < 60 ? "bg-red-900/30 border-red-700/30 text-red-400" :
+                    "bg-white/5 border-white/20 text-white/60"
+                  }`}>
+                    Best: {group.bestScore}%
+                  </span>
+                )}
+                {!group.attempted && (
+                  <span className="text-xs px-2 py-0.5 rounded-full border border-white/10 text-white/30">Not started</span>
+                )}
+                {reassignDone === group.level && (
+                  <span className="text-xs px-2 py-0.5 rounded-full border border-green-600/40 bg-green-900/20 text-green-400">✓ Re-assigned!</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setReassignPanel(reassignPanel === group.level ? null : group.level); setResetProgress(true); setRerollQuestions(true); }}
+                  className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-white/20 text-white/50 hover:border-white/40 hover:text-white/80 transition-all cursor-pointer"
+                  title="Re-assign this level"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Re-assign
+                </button>
+                {openLevels[group.level] ? <ChevronUp className="w-4 h-4 opacity-60" /> : <ChevronDown className="w-4 h-4 opacity-60" />}
+              </div>
+            </button>
+
+            {/* Re-assign panel */}
+            {reassignPanel === group.level && (
+              <div className="border-t border-white/10 p-4 bg-black/30 space-y-3">
+                <p className="text-xs text-white/50 font-medium uppercase tracking-wider">Re-assign options for {LEVEL_LABELS[group.level]}</p>
+                <label className="flex items-start gap-3 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={resetProgress}
+                    onChange={(e) => setResetProgress(e.target.checked)}
+                    className="mt-0.5 accent-[#CC0000] w-4 h-4 cursor-pointer"
+                  />
+                  <div>
+                    <div className="flex items-center gap-1.5 text-sm font-medium text-white/80 group-hover:text-white">
+                      <RotateCcw className="w-3.5 h-3.5 text-[#CC0000]" />
+                      Reset Yousif&apos;s score
+                    </div>
+                    <p className="text-xs text-white/40 mt-0.5">Clears all attempt history for this level — he starts fresh with a clean score</p>
+                  </div>
+                </label>
+                <label className="flex items-start gap-3 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={rerollQuestions}
+                    onChange={(e) => setRerollQuestions(e.target.checked)}
+                    className="mt-0.5 accent-[#FFD700] w-4 h-4 cursor-pointer"
+                  />
+                  <div>
+                    <div className="flex items-center gap-1.5 text-sm font-medium text-white/80 group-hover:text-white">
+                      <Shuffle className="w-3.5 h-3.5 text-[#FFD700]" />
+                      Give him a fresh set of questions
+                    </div>
+                    <p className="text-xs text-white/40 mt-0.5">Randomly picks {ACTIVE_COUNT[group.level]} questions from the full question bank — he may see different questions next time</p>
+                  </div>
+                </label>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={handleReassign}
+                    disabled={reassigning || (!resetProgress && !rerollQuestions)}
+                    className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#CC0000] to-[#990000] rounded-lg text-sm font-bold hover:from-red-600 hover:to-red-800 transition-all disabled:opacity-40 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${reassigning ? "animate-spin" : ""}`} />
+                    {reassigning ? "Re-assigning..." : "Confirm Re-assign"}
+                  </button>
+                  <button
+                    onClick={() => setReassignPanel(null)}
+                    className="px-4 py-2 border border-white/20 rounded-lg text-sm text-white/50 hover:text-white hover:border-white/40 transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Questions */}
           {openLevels[group.level] && (
