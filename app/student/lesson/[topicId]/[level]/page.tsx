@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { CheckCircle, XCircle, Zap, ChevronRight, RotateCcw, Home } from "lucide-react";
+import { CheckCircle, XCircle, Zap, ChevronRight, RotateCcw, Home, BookOpen } from "lucide-react";
 import { LEVEL_LABELS, type Level } from "@/types";
+import LessonOverlay from "@/components/student/LessonOverlay";
+import { generateLessonContent, type LessonContent } from "@/lib/lessonContent";
 
 interface Question {
   id: string;
@@ -11,6 +13,8 @@ interface Question {
   options: string | null;
   xpValue: number;
   level: string;
+  explanation: string | null;
+  topicId: string;
 }
 
 interface AnswerRecord {
@@ -19,7 +23,7 @@ interface AnswerRecord {
   isCorrect: boolean;
 }
 
-type Phase = "briefing" | "question" | "feedback" | "summary" | "celebration";
+type Phase = "briefing" | "question" | "feedback" | "lesson" | "retry" | "retry_feedback" | "summary" | "celebration";
 
 export default function LessonPage() {
   const params = useParams();
@@ -33,22 +37,23 @@ export default function LessonPage() {
   const [selected, setSelected] = useState<string>("");
   const [fillInput, setFillInput] = useState("");
   const [feedbackData, setFeedbackData] = useState<{ isCorrect: boolean; correctAnswer: string; explanation: string } | null>(null);
+  const [retryFeedbackData, setRetryFeedbackData] = useState<{ isCorrect: boolean; correctAnswer: string; explanation: string } | null>(null);
   const [answers, setAnswers] = useState<AnswerRecord[]>([]);
-  const [xpPopups, setXpPopups] = useState<Array<{ id: number; xp: number }>>([]);
+  const [xpPopups, setXpPopups] = useState<Array<{ id: number; xp: number; label?: string }>>([]);
   const [startTime] = useState(Date.now());
   const [shake, setShake] = useState(false);
   const [topicTitle, setTopicTitle] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [hatTrick, setHatTrick] = useState(0);
+  const [lessonContent, setLessonContent] = useState<LessonContent | null>(null);
+  const [comebackKing, setComebackKing] = useState(false);
   const popupCounter = useRef(0);
 
   useEffect(() => {
-    // Load questions
     fetch(`/api/student/questions?topicId=${topicId}&level=${level}`)
       .then((r) => r.json())
       .then((d) => setQuestions(d.questions || []));
 
-    // Load topic title
     fetch("/api/student/stats")
       .then((r) => r.json())
       .then((d) => {
@@ -60,60 +65,24 @@ export default function LessonPage() {
   const currentQuestion = questions[currentIdx];
   const parsedOptions = currentQuestion?.options ? JSON.parse(currentQuestion.options) as string[] : [];
 
-  const showXpPopup = (xp: number) => {
+  const showXpPopup = (xp: number, label?: string) => {
     const id = ++popupCounter.current;
-    setXpPopups((prev) => [...prev, { id, xp }]);
-    setTimeout(() => setXpPopups((prev) => prev.filter((p) => p.id !== id)), 1300);
+    setXpPopups((prev) => [...prev, { id, xp, label }]);
+    setTimeout(() => setXpPopups((prev) => prev.filter((p) => p.id !== id)), 1800);
   };
 
-  const handleSubmit = useCallback(async () => {
-    if (!currentQuestion) return;
-    const answer = currentQuestion.type === "FILL_BLANK" ? fillInput : selected;
-    if (!answer) return;
-    setSubmitting(true);
-
-    const res = await fetch("/api/student/check", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ questionId: currentQuestion.id, answer }),
-    });
-    const data = await res.json();
-    setFeedbackData(data);
-    setSubmitting(false);
-
-    const record: AnswerRecord = { questionId: currentQuestion.id, given: answer, isCorrect: data.isCorrect };
-    setAnswers((prev) => [...prev, record]);
-
-    if (data.isCorrect) {
-      showXpPopup(currentQuestion.xpValue);
-      setHatTrick((h) => h + 1);
-    } else {
-      setShake(true);
-      setHatTrick(0);
-      setTimeout(() => setShake(false), 500);
-    }
-
-    setPhase("feedback");
-  }, [currentQuestion, fillInput, selected]);
-
-  const handleNext = useCallback(() => {
+  const advanceOrFinish = useCallback((allAnswers: AnswerRecord[]) => {
     if (currentIdx + 1 < questions.length) {
       setCurrentIdx((i) => i + 1);
       setSelected("");
       setFillInput("");
       setFeedbackData(null);
+      setRetryFeedbackData(null);
       setPhase("question");
     } else {
-      // End of lesson — save session
-      const score = answers.filter((a) => a.isCorrect).length + (feedbackData?.isCorrect ? 1 : 0);
-      const lastAnswer = answers[answers.length - 1];
-      const allAnswers = [...answers];
-      if (!allAnswers.find((a) => a.questionId === currentQuestion?.id)) {
-        // last answer not yet in array (it was just added before next)
-      }
+      const totalCorrect = allAnswers.filter((a) => a.isCorrect).length;
       const xpEarned = allAnswers.reduce((s, a) => s + (a.isCorrect ? 10 : 0), 0);
       const duration = Math.floor((Date.now() - startTime) / 1000);
-      const totalCorrect = allAnswers.filter((a) => a.isCorrect).length;
       const pct = questions.length > 0 ? (totalCorrect / questions.length) * 100 : 0;
 
       fetch("/api/student/session", {
@@ -132,19 +101,111 @@ export default function LessonPage() {
 
       setPhase(pct >= 80 ? "celebration" : "summary");
     }
-  }, [currentIdx, questions, answers, feedbackData, currentQuestion, topicId, level, startTime]);
+  }, [currentIdx, questions, startTime, topicId, level]);
 
-  // Handle enter key
+  const handleSubmit = useCallback(async () => {
+    if (!currentQuestion) return;
+    const answer = currentQuestion.type === "FILL_BLANK" ? fillInput : selected;
+    if (!answer) return;
+    setSubmitting(true);
+
+    const res = await fetch("/api/student/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ questionId: currentQuestion.id, answer }),
+    });
+    const data = await res.json();
+    setFeedbackData(data);
+    setSubmitting(false);
+
+    const record: AnswerRecord = { questionId: currentQuestion.id, given: answer, isCorrect: data.isCorrect };
+    const newAnswers = [...answers, record];
+    setAnswers(newAnswers);
+
+    if (data.isCorrect) {
+      showXpPopup(currentQuestion.xpValue);
+      setHatTrick((h) => h + 1);
+      setPhase("feedback");
+    } else {
+      setShake(true);
+      setHatTrick(0);
+      setTimeout(() => setShake(false), 500);
+      setPhase("feedback");
+    }
+  }, [currentQuestion, fillInput, selected, answers]);
+
+  const handleShowLesson = useCallback(() => {
+    if (!currentQuestion) return;
+    const content = generateLessonContent({
+      questionText: currentQuestion.questionText,
+      type: currentQuestion.type,
+      correctAnswer: feedbackData?.correctAnswer ?? "",
+      explanation: currentQuestion.explanation,
+      topicId: currentQuestion.topicId,
+      level: currentQuestion.level,
+    });
+    setLessonContent(content);
+    setPhase("lesson");
+  }, [currentQuestion, feedbackData]);
+
+  const handleLessonReady = useCallback(() => {
+    setSelected("");
+    setFillInput("");
+    setPhase("retry");
+  }, []);
+
+  const handleRetrySubmit = useCallback(async () => {
+    if (!currentQuestion) return;
+    const answer = currentQuestion.type === "FILL_BLANK" ? fillInput : selected;
+    if (!answer) return;
+    setSubmitting(true);
+
+    const res = await fetch("/api/student/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ questionId: currentQuestion.id, answer }),
+    });
+    const data = await res.json();
+    setRetryFeedbackData(data);
+    setSubmitting(false);
+
+    if (data.isCorrect) {
+      setComebackKing(true);
+      showXpPopup(currentQuestion.xpValue + 5, "⚡ Comeback King +5");
+      const updated = answers.map((a) =>
+        a.questionId === currentQuestion.id ? { ...a, isCorrect: true } : a
+      );
+      setAnswers(updated);
+      setTimeout(() => setComebackKing(false), 2000);
+    }
+
+    setPhase("retry_feedback");
+  }, [currentQuestion, fillInput, selected, answers]);
+
+  const handleNext = useCallback(() => {
+    advanceOrFinish(answers);
+  }, [answers, advanceOrFinish]);
+
+  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Enter") {
-        if (phase === "question" && (selected || fillInput)) handleSubmit();
-        else if (phase === "feedback") handleNext();
-      }
+      if (phase === "question" && (selected || fillInput) && e.key === "Enter") handleSubmit();
+      if (phase === "retry" && (selected || fillInput) && e.key === "Enter") handleRetrySubmit();
+      if ((phase === "feedback" || phase === "retry_feedback") && e.key === "Enter") handleNext();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [phase, selected, fillInput, handleSubmit, handleNext]);
+  }, [phase, selected, fillInput, handleSubmit, handleRetrySubmit, handleNext]);
+
+  if (phase === "lesson" && lessonContent) {
+    return (
+      <LessonOverlay
+        content={lessonContent}
+        onReady={handleLessonReady}
+        onClose={() => setPhase("feedback")}
+      />
+    );
+  }
 
   if (phase === "briefing") {
     return (
@@ -170,8 +231,8 @@ export default function LessonPage() {
                 <div className="text-xs text-white/50">Hat-trick bonus</div>
               </div>
               <div className="cr7-card rounded-xl p-3 text-center">
-                <div className="text-2xl mb-1">🏆</div>
-                <div className="text-xs text-white/50">Clean sheet badge</div>
+                <div className="text-2xl mb-1">📚</div>
+                <div className="text-xs text-white/50">Lesson on wrong</div>
               </div>
             </div>
 
@@ -225,7 +286,7 @@ export default function LessonPage() {
 
           <div className="flex gap-3">
             <button
-              onClick={() => { setAnswers([]); setCurrentIdx(0); setSelected(""); setFillInput(""); setPhase("briefing"); }}
+              onClick={() => { setAnswers([]); setCurrentIdx(0); setSelected(""); setFillInput(""); setFeedbackData(null); setRetryFeedbackData(null); setPhase("briefing"); }}
               className="flex-1 flex items-center justify-center gap-2 py-3 border border-white/20 rounded-xl hover:bg-white/10 transition-all text-white/70 cursor-pointer"
             >
               <RotateCcw className="w-4 h-4" />
@@ -246,7 +307,10 @@ export default function LessonPage() {
 
   if (!currentQuestion) return <div className="text-center py-20 text-white/50">Loading...</div>;
 
-  const progress = ((currentIdx) / questions.length) * 100;
+  const progress = (currentIdx / questions.length) * 100;
+  const isRetry = phase === "retry" || phase === "retry_feedback";
+  const activeFeedback = isRetry ? retryFeedbackData : feedbackData;
+  const isInFeedback = phase === "feedback" || phase === "retry_feedback";
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
@@ -254,10 +318,19 @@ export default function LessonPage() {
       <div className="fixed top-20 right-4 z-50 space-y-2 pointer-events-none">
         {xpPopups.map((p) => (
           <div key={p.id} className="float-xp bg-[#FFD700] text-black font-black rounded-full px-4 py-1.5 text-sm shadow-lg">
-            +{p.xp} ⭐
+            {p.label ? p.label : `+${p.xp} ⭐`}
           </div>
         ))}
       </div>
+
+      {/* Comeback King flash */}
+      {comebackKing && (
+        <div className="fixed inset-0 z-40 pointer-events-none flex items-center justify-center">
+          <div className="bg-[#FFD700] text-black bebas text-5xl tracking-widest px-12 py-6 rounded-2xl shadow-2xl animate-ping-once">
+            ⚡ COMEBACK KING!
+          </div>
+        </div>
+      )}
 
       {/* Progress bar */}
       <div className="flex items-center gap-3">
@@ -273,8 +346,16 @@ export default function LessonPage() {
         <span className="text-white/40 text-sm">{currentIdx + 1}/{questions.length}</span>
       </div>
 
+      {/* Retry banner */}
+      {isRetry && (
+        <div className="flex items-center gap-2 bg-[#FFD700]/10 border border-[#FFD700]/30 rounded-xl px-4 py-2.5">
+          <span className="text-[#FFD700] text-sm font-bold">⚡ Retry — You can do it!</span>
+          <span className="text-white/40 text-xs ml-auto">Comeback King bonus if correct</span>
+        </div>
+      )}
+
       {/* Hat-trick indicator */}
-      {hatTrick >= 2 && (
+      {hatTrick >= 2 && !isRetry && (
         <div className="flex items-center gap-1 text-xs text-[#FFD700]">
           {[...Array(Math.min(hatTrick, 3))].map((_, i) => <span key={i}>⚽</span>)}
           {hatTrick >= 2 && <span className="ml-1">{hatTrick >= 3 ? "HAT-TRICK!" : "2 in a row!"}</span>}
@@ -282,13 +363,14 @@ export default function LessonPage() {
       )}
 
       {/* Question card */}
-      <div className={`cr7-card rounded-2xl p-6 border border-white/10 ${shake ? "shake" : ""}`}>
+      <div className={`cr7-card rounded-2xl p-6 border ${isRetry ? "border-[#FFD700]/20" : "border-white/10"} ${shake ? "shake" : ""}`}>
         <div className="flex items-center gap-2 mb-4">
           <span className="text-xs text-white/30 uppercase tracking-widest">{LEVEL_LABELS[level]}</span>
           <span className="text-white/20">•</span>
           <span className="flex items-center gap-1 text-xs text-[#FFD700]/70">
             <Zap className="w-3 h-3" />+{currentQuestion.xpValue} XP
           </span>
+          {isRetry && <span className="ml-auto text-xs text-[#FFD700]/60">+5 bonus if correct</span>}
         </div>
 
         <h2 className="text-xl font-bold mb-6 leading-relaxed">{currentQuestion.questionText}</h2>
@@ -299,13 +381,13 @@ export default function LessonPage() {
             {parsedOptions.map((opt) => (
               <button
                 key={opt}
-                onClick={() => phase === "question" && setSelected(opt)}
-                disabled={phase === "feedback"}
+                onClick={() => !isInFeedback && setSelected(opt)}
+                disabled={isInFeedback}
                 className={`w-full text-left px-4 py-3.5 rounded-xl border transition-all min-h-[52px] cursor-pointer text-sm font-medium ${
-                  phase === "feedback"
-                    ? opt === feedbackData?.correctAnswer
+                  isInFeedback
+                    ? opt === activeFeedback?.correctAnswer
                       ? "bg-green-900/40 border-green-600/60 text-green-300"
-                      : opt === selected && !feedbackData?.isCorrect
+                      : opt === selected && !activeFeedback?.isCorrect
                       ? "bg-red-900/40 border-red-600/60 text-red-300"
                       : "border-white/10 text-white/40"
                     : selected === opt
@@ -325,13 +407,13 @@ export default function LessonPage() {
             {["True", "False"].map((opt) => (
               <button
                 key={opt}
-                onClick={() => phase === "question" && setSelected(opt)}
-                disabled={phase === "feedback"}
+                onClick={() => !isInFeedback && setSelected(opt)}
+                disabled={isInFeedback}
                 className={`py-4 rounded-xl border transition-all font-bold cursor-pointer ${
-                  phase === "feedback"
-                    ? opt === feedbackData?.correctAnswer
+                  isInFeedback
+                    ? opt === activeFeedback?.correctAnswer
                       ? "bg-green-900/40 border-green-600/60 text-green-300"
-                      : opt === selected && !feedbackData?.isCorrect
+                      : opt === selected && !activeFeedback?.isCorrect
                       ? "bg-red-900/40 border-red-600/60 text-red-300"
                       : "border-white/10 text-white/40"
                     : selected === opt
@@ -351,12 +433,12 @@ export default function LessonPage() {
             <input
               type="text"
               value={fillInput}
-              onChange={(e) => phase === "question" && setFillInput(e.target.value)}
-              disabled={phase === "feedback"}
+              onChange={(e) => !isInFeedback && setFillInput(e.target.value)}
+              disabled={isInFeedback}
               placeholder="Type your answer..."
               className={`w-full px-4 py-3.5 rounded-xl border bg-white/5 text-white text-lg font-bold focus:outline-none transition-all ${
-                phase === "feedback"
-                  ? feedbackData?.isCorrect
+                isInFeedback
+                  ? activeFeedback?.isCorrect
                     ? "border-green-600/60 bg-green-900/20"
                     : "border-red-600/60 bg-red-900/20"
                   : "border-white/20 focus:border-[#CC0000]/60"
@@ -368,50 +450,64 @@ export default function LessonPage() {
       </div>
 
       {/* Feedback */}
-      {phase === "feedback" && feedbackData && (
+      {isInFeedback && activeFeedback && (
         <div className={`rounded-xl p-4 border ${
-          feedbackData.isCorrect
+          activeFeedback.isCorrect
             ? "bg-green-900/20 border-green-700/40"
             : "bg-red-900/20 border-red-700/40"
         }`}>
           <div className="flex items-start gap-3">
-            {feedbackData.isCorrect
+            {activeFeedback.isCorrect
               ? <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
               : <XCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
             }
-            <div>
-              <div className={`font-bold ${feedbackData.isCorrect ? "text-green-400" : "text-red-400"}`}>
-                {feedbackData.isCorrect ? "⚽ GOAL! Brilliant!" : "Not quite — keep going!"}
+            <div className="flex-1">
+              <div className={`font-bold ${activeFeedback.isCorrect ? "text-green-400" : "text-red-400"}`}>
+                {activeFeedback.isCorrect
+                  ? (isRetry ? "⚡ Comeback King! Brilliant recovery!" : "⚽ GOAL! Brilliant!")
+                  : (isRetry ? "Don't worry — check the answer below" : "Not quite — want to understand why?")}
               </div>
-              {!feedbackData.isCorrect && (
+              {!activeFeedback.isCorrect && (
                 <div className="text-white/60 text-sm mt-0.5">
-                  Correct answer: <span className="font-bold text-white">{feedbackData.correctAnswer}</span>
+                  Correct answer: <span className="font-bold text-white">{activeFeedback.correctAnswer}</span>
                 </div>
               )}
-              {feedbackData.explanation && (
-                <div className="text-white/50 text-sm mt-1">{feedbackData.explanation}</div>
+              {activeFeedback.explanation && (
+                <div className="text-white/50 text-sm mt-1">{activeFeedback.explanation}</div>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Action button */}
-      {phase === "question" ? (
+      {/* Action buttons */}
+      {!isInFeedback ? (
         <button
-          onClick={handleSubmit}
+          onClick={isRetry ? handleRetrySubmit : handleSubmit}
           disabled={(!selected && !fillInput) || submitting}
           className="w-full py-4 bg-gradient-to-r from-[#CC0000] to-[#990000] rounded-xl bebas text-xl tracking-widest hover:from-red-600 hover:to-red-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:-translate-y-0.5 cursor-pointer"
         >
           {submitting ? "Checking..." : "Take the Shot ⚽"}
         </button>
       ) : (
-        <button
-          onClick={handleNext}
-          className="w-full py-4 bg-gradient-to-r from-[#222] to-[#333] border border-white/20 rounded-xl bebas text-xl tracking-widest hover:border-[#CC0000]/40 hover:bg-[#CC0000]/10 transition-all cursor-pointer"
-        >
-          {currentIdx + 1 < questions.length ? "Next Question →" : "See Results 🏆"}
-        </button>
+        <div className="space-y-2">
+          {/* Show Me How button — only on first wrong, not on retry feedback */}
+          {phase === "feedback" && !feedbackData?.isCorrect && (
+            <button
+              onClick={handleShowLesson}
+              className="w-full py-3.5 flex items-center justify-center gap-2 bg-gradient-to-r from-[#FFD700]/20 to-[#cc9900]/20 border border-[#FFD700]/40 rounded-xl bebas text-lg tracking-wider text-[#FFD700] hover:border-[#FFD700]/70 hover:bg-[#FFD700]/10 transition-all cursor-pointer"
+            >
+              <BookOpen className="w-5 h-5" />
+              Show Me How 📚
+            </button>
+          )}
+          <button
+            onClick={handleNext}
+            className="w-full py-4 bg-gradient-to-r from-[#222] to-[#333] border border-white/20 rounded-xl bebas text-xl tracking-widest hover:border-[#CC0000]/40 hover:bg-[#CC0000]/10 transition-all cursor-pointer"
+          >
+            {currentIdx + 1 < questions.length ? "Next Question →" : "See Results 🏆"}
+          </button>
+        </div>
       )}
     </div>
   );

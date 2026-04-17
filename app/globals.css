@@ -93,6 +93,14 @@ h1, h2, h3, .bebas {
 .float-xp { animation: floatUp 1.2s ease-out forwards; }
 .confetti-piece { animation: confettiFall linear forwards; }
 
+@keyframes pingOnce {
+  0% { transform: scale(0.6); opacity: 0; }
+  40% { transform: scale(1.05); opacity: 1; }
+  70% { transform: scale(0.97); opacity: 1; }
+  100% { transform: scale(1); opacity: 0; }
+}
+.animate-ping-once { animation: pingOnce 1.8s ease-out forwards; }
+
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: #111; }
 ::-webkit-scrollbar-thumb { background: #CC0000; border-radius: 3px; }

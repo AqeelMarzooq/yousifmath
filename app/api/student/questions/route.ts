@@ -28,6 +28,8 @@ export async function GET(req: NextRequest) {
       options: true,
       xpValue: true,
       level: true,
+      explanation: true,
+      topicId: true,
     },
   });
 
