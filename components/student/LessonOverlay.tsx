@@ -7,9 +7,11 @@ interface Props {
   content: LessonContent;
   onReady: () => void;
   onClose: () => void;
+  /** Override the final-step button label. Defaults to student retry label. */
+  readyLabel?: string;
 }
 
-export default function LessonOverlay({ content, onReady, onClose }: Props) {
+export default function LessonOverlay({ content, onReady, onClose, readyLabel }: Props) {
   const [stepIdx, setStepIdx] = useState(0);
   const [animating, setAnimating] = useState(false);
 
@@ -110,7 +112,7 @@ export default function LessonOverlay({ content, onReady, onClose }: Props) {
               onClick={onReady}
               className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-[#FFD700] to-[#cc9900] rounded-xl bebas tracking-wider text-black hover:brightness-110 transition-all cursor-pointer animate-pulse"
             >
-              I&apos;m ready to try again! ⚽
+              {readyLabel ?? "I'm ready to try again! ⚽"}
             </button>
           )}
         </div>

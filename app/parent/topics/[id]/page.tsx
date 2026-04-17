@@ -2,9 +2,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { CheckCircle, XCircle, Circle, ChevronDown, ChevronUp } from "lucide-react";
+import { CheckCircle, XCircle, Circle, ChevronDown, ChevronUp, BookOpen } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import LessonOverlay from "@/components/student/LessonOverlay";
+import { generateLessonContent, type LessonContent } from "@/lib/lessonContent";
 
 const LEVEL_LABELS: Record<string, string> = {
   FLUENCY: "Warm-Up",
@@ -55,6 +57,7 @@ export default function ParentTopicDetail() {
   const [data, setData] = useState<{ topic: any; grouped: LevelGroup[]; totalSessions: number } | null>(null);
   const [openLevels, setOpenLevels] = useState<Record<string, boolean>>({ FLUENCY: true, SKILL: true, DEPTH: true });
   const [expandedQ, setExpandedQ] = useState<Record<string, boolean>>({});
+  const [overlay, setOverlay] = useState<LessonContent | null>(null);
 
   useEffect(() => {
     fetch(`/api/parent/topic/${topicId}`).then((r) => r.json()).then(setData);
@@ -67,8 +70,30 @@ export default function ParentTopicDetail() {
   const attempted = allQuestions.filter((q) => q.latestAnswer !== null);
   const correct = allQuestions.filter((q) => q.latestAnswer?.isCorrect);
 
+  const openLesson = (q: QuestionData) => {
+    const content = generateLessonContent({
+      questionText: q.questionText,
+      type: q.type,
+      correctAnswer: q.correctAnswer,
+      explanation: q.explanation,
+      topicId,
+      level: q.level,
+    });
+    setOverlay(content);
+  };
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
+      {/* Lesson overlay — read-only parent view */}
+      {overlay && (
+        <LessonOverlay
+          content={overlay}
+          onReady={() => setOverlay(null)}
+          onClose={() => setOverlay(null)}
+          readyLabel="Got it — Close 👍"
+        />
+      )}
+
       <Link href="/parent/progress" className="text-white/40 hover:text-white text-sm transition-colors">
         ← Back to Progress
       </Link>
@@ -88,10 +113,16 @@ export default function ParentTopicDetail() {
         </div>
       </div>
 
+      {/* Legend */}
+      <div className="flex items-center gap-3 text-xs text-white/40 bg-white/3 border border-white/8 rounded-xl px-4 py-2.5">
+        <BookOpen className="w-3.5 h-3.5 text-[#FFD700]/60 flex-shrink-0" />
+        <span>Questions Yousif got <span className="text-red-400">wrong</span> show a <span className="text-[#FFD700]">View Lesson</span> button — tap it to see the exact explanation he would receive, so you can reinforce it at home.</span>
+      </div>
+
       {/* Level sections */}
       {grouped.map((group) => (
         <div key={group.level} className="space-y-2">
-          {/* Level header — clickable to collapse */}
+          {/* Level header */}
           <button
             onClick={() => setOpenLevels((o) => ({ ...o, [group.level]: !o[group.level] }))}
             className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all cursor-pointer ${LEVEL_COLORS[group.level]}`}
@@ -148,20 +179,23 @@ export default function ParentTopicDetail() {
                           <div className="flex items-center gap-2 flex-wrap mb-1">
                             <span className="text-white/30 text-xs font-mono">Q{qi + 1}</span>
                             <span className="text-xs text-white/30 border border-white/10 rounded px-1.5 py-0.5">{TYPE_LABELS[q.type]}</span>
+                            {status === "wrong" && (
+                              <span className="text-xs bg-red-900/30 text-red-400 border border-red-700/30 px-1.5 py-0.5 rounded">Wrong</span>
+                            )}
                           </div>
                           <p className="text-sm font-medium text-white/90">{q.questionText}</p>
 
                           {/* Quick answer summary */}
                           {q.latestAnswer && (
-                            <div className="mt-2 flex items-center gap-3 text-xs">
+                            <div className="mt-2 flex items-center gap-3 text-xs flex-wrap">
                               <span className="text-white/40">Yousif answered:</span>
                               <span className={`font-bold ${q.latestAnswer.isCorrect ? "text-green-400" : "text-red-400"}`}>
-                                "{q.latestAnswer.given}"
+                                &ldquo;{q.latestAnswer.given}&rdquo;
                               </span>
                               {!q.latestAnswer.isCorrect && (
                                 <>
                                   <span className="text-white/20">→</span>
-                                  <span className="text-[#FFD700] font-medium">Correct: "{q.correctAnswer}"</span>
+                                  <span className="text-[#FFD700] font-medium">Correct: &ldquo;{q.correctAnswer}&rdquo;</span>
                                 </>
                               )}
                             </div>
@@ -227,6 +261,17 @@ export default function ParentTopicDetail() {
                           </div>
                         )}
 
+                        {/* View Lesson button — only for wrong answers */}
+                        {status === "wrong" && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openLesson(q); }}
+                            className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#FFD700]/10 border border-[#FFD700]/30 rounded-xl text-[#FFD700] text-sm font-semibold hover:bg-[#FFD700]/20 hover:border-[#FFD700]/50 transition-all cursor-pointer"
+                          >
+                            <BookOpen className="w-4 h-4" />
+                            View Lesson — see how Yousif is taught this 📚
+                          </button>
+                        )}
+
                         {/* Attempt history */}
                         {q.history.length > 0 && (
                           <div>
@@ -238,7 +283,9 @@ export default function ParentTopicDetail() {
                                     ? <CheckCircle className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
                                     : <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
                                   }
-                                  <span className={h.isCorrect ? "text-green-400" : "text-red-400"}>"{h.given}"</span>
+                                  <span className={h.isCorrect ? "text-green-400" : "text-red-400"}>
+                                    &ldquo;{h.given}&rdquo;
+                                  </span>
                                   <span className="text-white/20 ml-auto">
                                     {new Date(h.answeredAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
                                   </span>
