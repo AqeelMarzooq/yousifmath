@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { LayoutDashboard, BookOpen, Trophy, User, LogOut, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ChatWidget } from "@/components/chat/ChatWidget";
 
 const links = [
   { href: "/student/dashboard", icon: LayoutDashboard, label: "Pitch" },
@@ -50,6 +51,7 @@ export function StudentNav() {
         </div>
       </header>
       <div className="h-14" />
+      <ChatWidget role="STUDENT" />
     </>
   );
 }

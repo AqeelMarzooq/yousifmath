@@ -64,3 +64,12 @@ model Answer {
   given      String
   isCorrect  Boolean
 }
+
+model Message {
+  id         String    @id @default(cuid())
+  senderId   String
+  senderRole String
+  content    String
+  createdAt  DateTime  @default(now())
+  readAt     DateTime?
+}

@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { LayoutDashboard, BarChart2, Activity, ClipboardList, Settings, LogOut, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ChatWidget } from "@/components/chat/ChatWidget";
 
 const links = [
   { href: "/parent/dashboard", icon: LayoutDashboard, label: "Overview" },
@@ -50,6 +51,7 @@ export function ParentNav() {
         </div>
       </header>
       <div className="h-14" />
+      <ChatWidget role="PARENT" />
     </>
   );
 }
