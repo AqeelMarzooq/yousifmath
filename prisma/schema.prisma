@@ -1,0 +1,66 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  role      String
+  createdAt DateTime @default(now())
+  sessions  AttemptSession[]
+}
+
+model Topic {
+  id          String   @id @default(cuid())
+  title       String
+  lo          String
+  order       Int
+  isActive    Boolean  @default(true)
+  isAssigned  Boolean  @default(false)
+  questions   Question[]
+  sessions    AttemptSession[]
+}
+
+model Question {
+  id            String   @id @default(cuid())
+  topicId       String
+  topic         Topic    @relation(fields: [topicId], references: [id])
+  level         String
+  type          String
+  questionText  String
+  options       String?
+  correctAnswer String
+  explanation   String?
+  xpValue       Int      @default(10)
+  answers       Answer[]
+}
+
+model AttemptSession {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  topicId     String
+  topic       Topic    @relation(fields: [topicId], references: [id])
+  level       String
+  score       Int
+  totalQs     Int
+  xpEarned    Int
+  duration    Int
+  completedAt DateTime @default(now())
+  answers     Answer[]
+}
+
+model Answer {
+  id         String         @id @default(cuid())
+  sessionId  String
+  session    AttemptSession @relation(fields: [sessionId], references: [id])
+  questionId String
+  question   Question       @relation(fields: [questionId], references: [id])
+  given      String
+  isCorrect  Boolean
+}
